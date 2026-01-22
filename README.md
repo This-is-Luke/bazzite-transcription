@@ -136,7 +136,7 @@ These are optional but useful:
 *   `START_DELAY_SEC=5`
     *   Adds a delay on startup (helpful on login so audio/session is ready)
 
-*   `SYS_AUDIO_TARGET="<sink>.monitor"`
+*   `SYS_AUDIO_TARGET="<sink>.monitor"` (Linux only)
     *   Force a specific PipeWire/Pulse monitor source.
     *   Usually auto-detected correctly, but forcing can help unusual setups.
 
@@ -310,3 +310,133 @@ If you run with `GRAB_KEYBOARD=1`, it won’t leak into your terminal (because t
 *   Transcription: **Faster-Whisper** (CTranslate2 backend)
 *   Clipboard: **wl-clipboard**
 *   Audio stack: **PipeWire / WirePlumber** (Pulse compatibility for monitor capture)
+
+---
+
+# macOS (Apple Silicon / M1)
+
+This script also supports macOS with a slightly different setup (no `evdev`, no PipeWire, no `wl-copy`).
+
+## macOS Requirements
+
+*   Python 3.10+ (pyenv or Homebrew)
+*   Homebrew packages:
+    ```bash
+    brew install portaudio
+    ```
+*   Pip packages:
+    ```bash
+    pip install -U numpy sounddevice pynput faster-whisper
+    ```
+
+## macOS Setup Notes
+
+*   **Hotkeys**: `pynput` requires Accessibility permissions. Grant access in:
+    `System Settings → Privacy & Security → Accessibility`.
+*   **Hotkey behavior (macOS)**:
+    *   Press **F8** once to start/stop system audio
+    *   Press **F9** once to start/stop microphone
+    *   Auto-stops after 5 minutes (configurable)
+*   **Clipboard**: uses `pbcopy` (built in).
+*   **System audio**: macOS cannot capture system audio without a loopback device.
+    Install a loopback device like **BlackHole** and set `SYS_AUDIO_DEVICE` to that input.
+
+## macOS Example
+
+```bash
+export SYS_AUDIO_DEVICE="BlackHole 2ch"
+export WHISPER_DEVICE="cpu"
+export WHISPER_COMPUTE_TYPE="int8"
+python3 transcription.py
+```
+
+## Run on login (macOS launchd)
+
+This starts the script in the background at login without opening a terminal.
+
+### 1) Create a LaunchAgent
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+
+cat << 'EOF' > ~/Library/LaunchAgents/com.whisper.transcribe.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.whisper.transcribe</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/REPLACE_ME/Documents/code/transcription/bazzite-transcription/.venv/bin/python</string>
+    <string>/Users/REPLACE_ME/Documents/code/transcription/bazzite-transcription/transcription.py</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WHISPER_DEVICE</key>
+    <string>cpu</string>
+    <key>WHISPER_COMPUTE_TYPE</key>
+    <string>int8</string>
+    <key>HOTKEY_SYS_KEY</key>
+    <string>f8</string>
+    <key>HOTKEY_MIC_KEY</key>
+    <string>f9</string>
+    <!-- Optional: set system audio input device -->
+    <!-- <key>SYS_AUDIO_DEVICE</key> <string>BlackHole 2ch</string> -->
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/REPLACE_ME/Library/Logs/whisper-transcribe.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/REPLACE_ME/Library/Logs/whisper-transcribe.err.log</string>
+</dict>
+</plist>
+EOF
+```
+
+Replace `REPLACE_ME` with your macOS username.
+
+### 2) Load and start
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.whisper.transcribe.plist 2>/dev/null
+launchctl load ~/Library/LaunchAgents/com.whisper.transcribe.plist
+launchctl start com.whisper.transcribe
+```
+
+### 3) Stop / restart
+
+```bash
+launchctl stop com.whisper.transcribe
+launchctl unload ~/Library/LaunchAgents/com.whisper.transcribe.plist
+launchctl load ~/Library/LaunchAgents/com.whisper.transcribe.plist
+```
+
+### 4) Logs
+
+```bash
+tail -f ~/Library/Logs/whisper-transcribe.out.log
+tail -f ~/Library/Logs/whisper-transcribe.err.log
+```
+
+**Note:** The first time it runs, macOS will still require Accessibility/Input Monitoring permissions. Grant those to the app that hosts this process (the Python binary in `.venv`).
+
+## macOS Environment variables (additional)
+
+*   `SYS_AUDIO_DEVICE="<device name or index>"` (macOS only)
+    *   Use a loopback input like **BlackHole** for system audio.
+*   `MIC_DEVICE="<device name or index>"`
+    *   Selects a specific input device for mic capture.
+*   `WHISPER_DEVICE` / `WHISPER_COMPUTE_TYPE`
+    *   Override device and compute type (`cpu` + `int8` works well on M1).
+*   `HOTKEY_SYS_KEY="f8"` / `HOTKEY_MIC_KEY="f9"`
+    *   Override macOS hotkeys if needed.
+*   `MAX_RECORD_SEC="300"`
+    *   Max recording length before auto-stop.
